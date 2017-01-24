@@ -11,13 +11,17 @@ int geigerGetCpm()
   return geigerCpm;
 }
 
+void geigerSetup()
+{
+   Serial1.begin(9600);//used by GC-10
+}
 /**
 * Do something with response from geiger counter
 */
 void processSerial1Response()
 {
   String s(serial1Buffer);
-  geigerCpm = s.toInt();
+  geigerCpm = s.toInt();//todo validate response!!!!
 }
 
 /**

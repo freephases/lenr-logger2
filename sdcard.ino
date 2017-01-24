@@ -19,11 +19,10 @@
 // functions will not work.
 //
 // Chip Select pin is tied to pin 8 on the SparkFun SD Card Shield
-const int chipSelect = 53;  
+const int chipSelect = LL_PIN_SD_CARD_CHIP_SELECT;  
 
 void sdCardSetup()
-{
- 
+{  
   if (debugToSerial) {
     Serial.print("D^Initializing SD card...");
   }
@@ -51,8 +50,6 @@ void sdCardSetup()
 void saveLineToDatalog(String data)
 {
   File dataFile = SD.open("datalog.txt", FILE_WRITE);
-
-  // if the file is available, write to it:
   if (dataFile) 
   {    
     dataFile.println(data);
@@ -60,7 +57,7 @@ void saveLineToDatalog(String data)
   }  
   else
   {
-    Serial.println("!~^error writing to datalog.txt");   
+    Serial.println("!!^error writing to datalog.txt");   
   } 
 }
 

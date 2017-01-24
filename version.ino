@@ -8,7 +8,7 @@ int getVersionMinorRelease()
 }
 int getVersionMajorBuild()
 {
-  return 1;
+  return 0;
 }
 int getVersionMinorBuild()
 {

@@ -1,21 +1,23 @@
-#include <MAX31855Fix.h>
-
-#include <PID_v1.h>
-
-#include <RunningMedian.h>
-
 /**
-* LENR logger v2
+*  _     ___  _  _  ___   _                              __      _     _ 
+* | |   | __|| \| || _ \ | | ___  __ _  __ _  ___  _ _  / /_ __ (_) __| |
+* | |__ | _| | .` ||   / | |/ _ \/ _` |/ _` |/ -_)| '_|/ /| '_ \| |/ _` |
+* |____||___||_|\_||_|_\ |_|\___/\__, |\__, |\___||_| /_/ | .__/|_|\__,_|
+*                                |___/ |___/              |_|            
 *
-*
+* version 2
+* 
+* Logger and PID for use with LENR experiments
+* 
 * Uses:
 *  - Arduino Mega ATmega2560
 *  _ SD card compatible with SD and SPI libs
-*  - MAX31855 with thermocouple x 2 (at least, can have up to 4)
+*  - TC quad module (4 TC's connented to unit with MC and therefore a single serial)
+*    see: https://github.com/freephases/ThermocoupleUnit
 *  - 5v transducer -14.5~30 PSI 0.5-4.5V linear voltage output
-*  - GC-10 added as new default option
-*  - OPTIONAL: Arduino Pro Mini with a OpenEnergyMonitor SMD card using analog ports 0-1 only - the power/emon slave
-*    runs https://github.com/freephases/power-serial-slave.git
+*  - GC-10 Geiger counter uit
+*  - PSU+Stepdown+H-Bridge module connected by serial
+*    see: https://github.com/freephases/sudoac
 *
 *  Copyright (c) 2015-2017 free phases research
 *
@@ -39,17 +41,16 @@
 */
 
 /**
-* SD card lib + SPI
+* libs
 */
 #include <SPI.h>
 #include <SD.h>
 #include <SoftwareSerial.h>
-
+#include <PID_v1.h>
+#include <RunningMedian.h>
 #include <math.h>
-/**
-* thermocouple driver/amp lib -toredo
-*/
-#include <Adafruit_MAX31855.h>
+
+
 
 /**
 * OnOff is simple class to manage digital ports see: https://github.com/freephases/arduino-onoff-lib
@@ -65,7 +66,7 @@
 /**
 * Led to signal we are working, using digital pin 30 on Mega connected to 5v green LED
 */
-OnOff connectionOkLight(13);
+OnOff connectionOkLight(LL_PIN_OK_LIGHT);
 
 /**
 * global vars for run time...
@@ -97,18 +98,12 @@ char serial0Buffer[MAX_STRING_DATA_LENGTH_SMALL + 1];
 char serial0BufferInByte = 0;
 
 /**
-* Thermocouple DO and CLK ports, same for all thermocouples
-*/
-const int thermoDO = 3; //same as TC2
-const int thermoCLK = 5; //same as TC2
-
-/**
 * Thermocouple offsets, set by sd card if seting exists, see config
 */
-float manualMaxTemp = 1250.00; // temp we must ever go above - depends on thermocouple
+float manualMaxTemp = 800.00; // temp we must ever go above - depends on thermocouple
 const int thermocoupleCount = 4;
 int thermocoupleEnabledCount = 4;
-MAX31855Fix *thermocopulesList[thermocoupleCount];
+
 /**
  * parameters for controlling ramp up to temp
  */
@@ -123,10 +118,9 @@ float highestPressure = 29.50;
 * by lcd/keypad via lcdslave
 */
 int hBridgeSpeed = 10;//~3600Hz which is about 500 pluses with AC at 1000Hz; more work todo
+int hbridgeDelay = 0;//delay at end of each cycle in phases/segments
 
-float calibratedVoltage = 5.005; //4.976; //was 4.980 before 2016-01-03; now set by sd card if setting exists
-
-
+float calibratedVoltage = 5.0038; //4.976; //was 4.980 before 2016-01-03; now set by sd card if setting exists
 
 /*
 where K_p, K_i, and K_d, all non-negative, denote the coefficients for the proportional, integral, and derivative terms, respectively (sometimes denoted P, I, and D). In this model,
@@ -145,7 +139,8 @@ double KD = 0.25;   // Not yet used
 /**
 * Send the data to slave or serial, depending on config settings
 */
-void sendData() {
+void sendData() 
+{
   if (sendDataMillis == 0 || millis() - sendDataMillis >= sendDataInterval) {
     sendDataMillis = millis();
 
@@ -161,39 +156,55 @@ void sendData() {
 /**
 * Read all sensors at given intervals
 */
-void readSensors() {
-  thermocouplesRead();
+void readSensors() 
+{
   pressureRead();
 }
 
-void actionErrorCommand(char c){
-  Serial.print("!");Serial.println(c);
+void actionErrorCommand(char c, String message = "bad command"){
+  //Serial.print("!");
+  Serial.println("!"+String(c)+"^"+message);
 }
 
+  //our responses
+  //@[command][action] - means ok
+  //*[command][action]^(value) - response to request for info, [action] is optional
+  //![command]^(message) - error (command = ! is misc. error)
+  //D^(message) - debug
+  //R^(csv string) - data results
 
 void processMainSerialResponse() 
 {
-  //:[command][...]
+  //incoming is . :[command][...]
   if (serial0Buffer[0]!=':') {
     actionErrorCommand(':');
     return;
   }
   char c = serial0Buffer[1];
   switch(c) {
-    case 'h': //heater :h[action]
+    case 'h': //heater :h[action]([^value])
               if (strlen(serial0Buffer)>2) actionHeaterControlCommand(serial0Buffer[2]);
               else actionErrorCommand(c);
               break;
     case 'o': //set config/options :o^[setting name]=[value] eg :o^
-              if (strlen(serial0Buffer)>3) { 
+              if (strlen(serial0Buffer)>3&&serial0Buffer[2]=='^') { 
                 actionSetSettingCommand();               
               }
               else actionErrorCommand(c);
               break;
     case 's': //save config :s
-              saveSettings();
-              
+              saveSettings();              
               break;
+    case 'd': //display settings :d
+              displaySettings();              
+              break;
+    case 'v': //display board voltage :v             
+              Serial.println("*v^" +String(readVcc()));
+              break;
+//    case 't': //set date and time :t^2017-01-08 12.30pm GMT
+//              //todo with clock module
+//              break;
+//              
 //    case '?': //help :?
 //              actionHelpCommand();
 //              break;
@@ -207,7 +218,9 @@ void processMainSerial()
    while (Serial.available() > 0)
   {
     serial0BufferInByte = Serial.read();
-
+    //if (serial0BufferInByte == '\r') {
+     // continue; //ignore line feed
+    //}
     // add to our read buffer
     serial0Buffer[serial0BufferPos] = serial0BufferInByte;
     serial0BufferPos++;
@@ -217,42 +230,42 @@ void processMainSerial()
       serial0Buffer[serial0BufferPos - 1] = 0; // delimited
       processMainSerialResponse();
       serial0Buffer[0] = '\0';
+      serial0Buffer[1] = '\0';
+      serial0Buffer[2] = '\0';
       serial0BufferPos = 0;
     }
   }
 }
 
-
 /**
-* Process incomming slave serial data
+* Process serial connections, do one at a time per main loop to stop one serial cloging up the system
 */
-void manageSerial() {
-  processGeigerSerial();
-  processHbridgeSerial();
-  processMainSerial();
-}
-
-/**
-* Things to call when not sending data, called by other functions not just loop()
-*/
-void doMainLoops()
+int serialTick = 0;
+void manageSerial() 
 {
-  manageSerial();
-  readSensors();
-  //powerheaterLoop();
+  serialTick++;
+  if (serialTick>4) serialTick = 1;
+  
+  switch(serialTick) {
+    case 1: processMainSerial(); break;
+    case 2: processGeigerSerial(); break;
+    case 3: processThermocouplesSerial();break;
+    case 4: processHbridgeSerial(); break;
+  }
 }
+
 
 /**
 * Sensor and control components set up
 **/
 void setupDevices()
 {
-  sdCardSetup();
+  sdCardSetup();//must load first as it load the settngs/config
   thermocouplesSetup();
-  setupPressure();
-  powerheaterSetup();
   hBridgeSetup();
- 
+  powerheaterSetup();
+  geigerSetup();
+  setupPressure();  
   sendDataMillis = millis();//set milli secs so we get first reading after set interval
   connectionOkLight.off(); //set light off, will turn on if logging ok, flushing means error
 }
@@ -262,16 +275,16 @@ void setupDevices()
 */
 void setup()
 {
-  Serial.begin(9600); // main serial ports used for debugging or sending raw CSV over USB for PC processing
-  Serial1.begin(9600);//use by GC-10
-  //Serial2 free
-   //Serial3 free
+  Serial.begin(115200); // main serial ports used for debugging or sending raw CSV over USB for PC processing, see DEBUG_SLAVE_SERIAL to logger.h
+  //using also hardware serial ports:
+  // - Serial1: GC-10
+  // - Serial2: h bridge
+  // - Serial3: TC unit
   connectionOkLight.on(); //tell the user we are alive
-  Serial.println("");//clear
-  Serial.println("");
+  Serial.println("**");//clear
+  Serial.println("***");
   Serial.print("*I^LENR logger v"); // send some info on who we are, i = info, using pipes for delimiters, cool man!
-  Serial.print(getVersion());
-  Serial.println(";");
+  Serial.println(getVersion());
   setupDevices();
   Serial.println("*I^started");
 }
@@ -279,7 +292,10 @@ void setup()
 /**
 * Main loop
 */
-void loop() {
-  doMainLoops();
+void loop() 
+{  
+  readSensors();
+  manageSerial();  
+  regulateHeater();
   sendData();
 }

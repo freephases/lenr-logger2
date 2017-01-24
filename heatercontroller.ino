@@ -1,14 +1,14 @@
 /**
-* Heater Control, controls SSR or/and Hbridge to heater power supply
-* using PID lib that uses up to 5 specific run programs taken from
-* "power_off_temp" config file setting (see: config tab/file)
+  Heater Control, controls SSR or/and Hbridge to heater power supply
+  using PID lib that uses up to 5 specific run programs taken from
+  "power_off_temp" config file setting (see: config tab/file)
 */
 const unsigned long powerheaterCheckInterval = 1200;
 unsigned long powerheaterMillis = 0;
 //OnOff heaterPowerControl(36);
 //OnOff heaterPowerControl2(37);
 boolean heaterTimedOut = true; // true if reached maxRunTimeAllowedMillis
-#define PID_MAX_PROGRAMS 5
+#define PID_MAX_PROGRAMS 10
 float powerOffTemps[PID_MAX_PROGRAMS];
 //float powerTempsError[PID_MAX_PROGRAMS];
 unsigned long maxRunTimeAllowedMillis[PID_MAX_PROGRAMS];
@@ -29,35 +29,38 @@ double Setpoint, Input, Output, lastOutput;
 unsigned long lastTurnedOffMillis = 0;
 unsigned long lastTurnedOnMillis = 0;
 boolean isManualRun = false;
-const unsigned long WindowSize = 101;
+const unsigned long WindowSize = 255;
 unsigned long windowStartTime = 0;
 unsigned long computeTempRisesStart = 0;
 double lastTemp = 0.000;
-int powerVoltagePercentage = 0;// 0% = 10v on step down, 100 = ~49.8v on step down
+int powerVoltageValue = 0;// 0% = 10v on step down, 255 = ~49.8v on step down
 int lowestPower = 0;
-int highestPower = 100;
+int highestPower = 255;
 
-////                                  ,Kp,Ki,Kd,
+
 PID myPID(&Input, &Output, &Setpoint, KP, KI, KD, DIRECT);
-//double consKp=1, consKi=0.05, consKd=0.25;
+
 
 void heaterOn()
 {
-  if (!getIsHbridgeOn()) {
+  if (!thermocouplesAreActive()) {
+    Serial.println("!!^NOTC");//no tc error
+    thermocouplesWake();
+  } else if (!hBridgeIsActive()) {
+    Serial.println("!!^NOHB");//no h-bridge error
+    hbWake();
+  } else if (!getIsHbridgeOn()) {
     lastTurnedOnMillis = millis();
     lastTurnedOffMillis = 0;
     computeTempRisesStart = 0;//reset computeTempRisesStart
     hBridgeTurnOn();
-    if (debugToSerial) {
-      Serial.println("Heater on");
-    }
   }
 }
 
 /**
-* heaterOff
-*
-* @param doNotCheckOnStatus boolean - if true do not check if heater is on before turning off, default is to check (false)
+  heaterOff
+
+  @param doNotCheckOnStatus boolean - if true do not check if heater is on before turning off, default is to check (false)
 */
 void heaterOff(boolean doNotCheckOnStatus = false)
 {
@@ -65,27 +68,23 @@ void heaterOff(boolean doNotCheckOnStatus = false)
     lastTurnedOffMillis = millis();
     lastTurnedOnMillis = 0;
     hBridgeTurnOff();
-
-    if (debugToSerial) {
-      Serial.println("Heater off");
-    }
   }
 }
 
 
 void loadHeaterSettings()
 {
-   repeatProgramsBy = getConfigSettingAsInt("repeat", 0);
+  repeatProgramsBy = getConfigSettingAsInt("repeat", 0);
   /**
     Load the programs to run
   */
   for (int i = 0; i < PID_MAX_PROGRAMS; i++) {
 
     if (getValue(getConfigSetting("power_off_temp") + ',', ',', i).length() > 0) {
-      
+
       if (getValue(getConfigSetting("power_off_temp") + ',', ',', i).toFloat() == NAN) {
         if (debugToSerial) {
-          Serial.print ("Error reading power_off_temp value: ");
+          Serial.print ("D^Error reading power_off_temp value: ");
           Serial.println(getValue(getConfigSetting("power_off_temp") + ',', ',', i));
         }
         break; // bad value, stop processing power_on_temp settings
@@ -105,7 +104,7 @@ void loadHeaterSettings()
       powerTempsCount++;
 
       if (debugToSerial) {
-        Serial.println("Power temp ");
+        Serial.print("D^Power temp ");
         Serial.print(powerTempsCount);
         //Serial.print(" added - on: ");
         //Serial.print(powerOnTemps[i], DEC);
@@ -123,43 +122,43 @@ void loadHeaterSettings()
 
 }
 /**
-* Load power/PID settings
+  Load power/PID settings
 */
 void powerheaterSetup()
 {
   heaterOff(true);//makes sure it's off incase of reboot without a turn off heater command before hand
 
   loadHeaterSettings();
-  Input = 0;
+  Input = getControlTcTemp();
   Setpoint = powerOffTemps[0];
   myPID.SetOutputLimits(0, WindowSize);
-  
-  myPID.SetSampleTime(LL_TC_READ_INTERVAL);//200mS is default
+
+  myPID.SetSampleTime(powerheaterCheckInterval);//200mS is default
   //powerheaterMillis = millis() - powerheaterCheckInterval;
 }
 
 /**
-* `Set PID to use specific PID program
+  `Set PID to use specific PID program
 */
 void heaterProgramStart()
 {
   Input = getControlTcTemp();
   Setpoint = powerOffTemps[currentProgram];
-  int i = map((int)Setpoint, -200, 950, 0,100);
+  int i = map((int)Setpoint, -200, 950, 0, WindowSize);
   setHBridgeVoltage(i);
-  powerVoltagePercentage =i; 
-  Output = powerVoltagePercentage;
+  powerVoltageValue = i;
+  Output = powerVoltageValue;
   delay(60);
 }
 
 /**
-* Check and switch program to run or end run
+  Check and switch program to run or end run
 */
 void checkProgramToRun()
 {
   if (currentProgramMillis != 0 && millis() - currentProgramMillis >= maxRunTimeAllowedMillis[currentProgram])  {
     currentProgram++;
-    currentRunNum++;        
+    currentRunNum++;
     if (currentProgram == powerTempsCount) {
       currentProgram = 0;//reset to first program
       repeatProgramsByCount++;//repeat count
@@ -186,7 +185,7 @@ void checkProgramToRun()
 }
 
 /**
-* set timer watchers
+  set timer watchers
 */
 void startProgramTimeTrackers()
 {
@@ -195,113 +194,103 @@ void startProgramTimeTrackers()
     programsRunStartMillis = millis();
   }
   if (currentProgramMillis == 0) {
-      currentProgramMillis = millis();      
-      lowestPower = powerVoltagePercentage-7;//we make lowest 6% lower then current power
-      if (lowestPower<0) lowestPower - 0;
-      highestPower = powerVoltagePercentage;//we know this power can get to given temp
-      if (highestPower<0) highestPower = 6;
-      myPID.SetOutputLimits(lowestPower, highestPower);
-      myPID.SetMode(AUTOMATIC);//start PID      
+    currentProgramMillis = millis();
+    lowestPower = powerVoltageValue - 7; //we make lowest 6% lower then current power
+    if (lowestPower < 0) lowestPower - 0;
+    highestPower = powerVoltageValue;//we know this power can get to given temp
+    if (highestPower < 0) highestPower = 6;
+    myPID.SetOutputLimits(lowestPower, highestPower);
+    myPID.SetMode(AUTOMATIC);//start PID
   }
 }
 
 /**
-* Check temp if in manual run
+  Check temp if in manual run
 */
-void monitorManualRun() {  
+void monitorManualRun() {
   if (getIsHbridgeOn()) {
-    if (getControlTcTemp() > manualMaxTemp || isPressureHigh()) {
+    if (getControlTcTemp() > manualMaxTemp) {
+      Serial.println("!!^MAXT");//hit max temp
+      heaterOff();
+    } else if (isPressureHigh()) {
+      Serial.println("!!^HIPR");//high pressure
       heaterOff();
     }
-  } else if (isManualRun && !isPressureHigh() && getControlTcTemp() < manualMaxTemp) { 
-      heaterOn();
+  } else if (isManualRun && !isPressureHigh() && getControlTcTemp() < manualMaxTemp) {
+    heaterOn();
   }
 }
 
 
-void powerDebug() {
-//  if (debugToSerial) {
-//    Serial.print("vp: "); Serial.print(powerVoltagePercentage); Serial.print(" ");
-//    Serial.print("setpoint: "); Serial.print(Setpoint); Serial.print(" ");
-//    Serial.print("input: "); Serial.print(Input); Serial.print(" ");
-//    Serial.print("output: "); Serial.print(Output); Serial.print(" ");
-//    //
-//    Serial.print("kp: "); Serial.print(myPID.GetKp()); Serial.print(" ");
-//    Serial.print("ki: "); Serial.print(myPID.GetKi()); Serial.print(" ");
-//    Serial.print("kd: "); Serial.print(myPID.GetKd()); Serial.println();
-//  }
-}
-
-void reducePower(int byPercent, int lowestPower=0)
+void reducePower(int byAmount, int lowestPower = 0)
 {
-  int powerLevelTmp = powerVoltagePercentage-byPercent;
-  if (powerLevelTmp<lowestPower) powerLevelTmp = lowestPower;
-  
-  if (powerLevelTmp!=powerVoltagePercentage) {
-    powerVoltagePercentage = powerLevelTmp;
-    setHBridgeVoltage(powerVoltagePercentage);
-    Output = powerVoltagePercentage;
+  int powerLevelTmp = powerVoltageValue - byAmount;
+  if (powerLevelTmp < lowestPower) powerLevelTmp = lowestPower;
+
+  if (powerLevelTmp != powerVoltageValue) {
+    powerVoltageValue = powerLevelTmp;
+    setHBridgeVoltage(powerVoltageValue);
+    Output = powerVoltageValue;
   }
 }
 
-void incresePower(int byPercent, int highestPower=100)
+void incresePower(int byAmount, int highestPower = 255)
 {
-  int powerLevelTmp = powerVoltagePercentage+byPercent;
-  if (powerLevelTmp>highestPower) powerLevelTmp = highestPower;
-  
-  if (powerLevelTmp!=powerVoltagePercentage) {
-    powerVoltagePercentage = powerLevelTmp;
-    setHBridgeVoltage(powerVoltagePercentage);
-    Output = powerVoltagePercentage;
+  int powerLevelTmp = powerVoltageValue + byAmount;
+  if (powerLevelTmp > highestPower) powerLevelTmp = highestPower;
+
+  if (powerLevelTmp != powerVoltageValue) {
+    powerVoltageValue = powerLevelTmp;
+    setHBridgeVoltage(powerVoltageValue);
+    Output = powerVoltageValue;
   }
 }
 
 void adjustPowerLevelsForRamping()
-{  
+{
   unsigned long now = millis();
-  if (computeTempRisesStart==0) {
+  if (computeTempRisesStart == 0) {
     computeTempRisesStart = now;
     lastTemp = Input;
   }
-  else if (now-computeTempRisesStart>tempRiseSampleTime) {
+  else if (now - computeTempRisesStart > tempRiseSampleTime) {
     computeTempRisesStart = now;
-    double tempRiseInCycle = Input-lastTemp;   
+    double tempRiseInCycle = Input - lastTemp;
     lastTemp = Input;
-    if (lastTemp>=Setpoint-5.0) {
-      reducePower(1);//3% is about 1.1v
+    if (lastTemp >= Setpoint - 5.0) {
+      reducePower(3);//3% is about 0.6v
       tempRiseSampleTime = 3000;
     }
-    else if (tempRiseInCycle>tempRiseMaxDegrees) { // 60000 / 5000 = 12, 1 ºC / 12 = 0.083 ºC
-     // int byPercent = 100 / ddd; //tempRiseInCycle/100; 1
-      reducePower(3);//3% is about 1.1v
-    } else if (tempRiseInCycle<tempRiseMaxDegrees) {
-      incresePower(3);
+    else if (tempRiseInCycle > tempRiseMaxDegrees) { 
+      reducePower(6);//6% is about 1.1v
+    } else if (tempRiseInCycle < tempRiseMaxDegrees) {
+      incresePower(6);
     }
-  } 
+  }
 }
 
 void adjustPowerLevelsForConstantTemp()
-{  
+{
   unsigned long now = millis();
-  if (computeTempRisesStart==0 || now-computeTempRisesStart>1500) {
+  if (computeTempRisesStart == 0 || now - computeTempRisesStart > 1500) {
     computeTempRisesStart = now;
-    double diffWithTarget = Input-Setpoint;
-    
-   // if (tempRiseInCycle>5.00) tempRiseInCycle = 5.00;
-  //  else if (tempRiseInCycle< -5.00) tempRiseInCycle = -5.00;
-       
+    double diffWithTarget = Input - Setpoint;
+
+    // if (tempRiseInCycle>5.00) tempRiseInCycle = 5.00;
+    //  else if (tempRiseInCycle< -5.00) tempRiseInCycle = -5.00;
+
     lastTemp = Input;
-    if (diffWithTarget>0.25) { // 60000 / 5000 = 12, 1 ºC / 12 = 0.083 ºC
-      reducePower(1,lowestPower);//3% is about 1.1v
-    } else if (diffWithTarget< 0.25) {
-      incresePower(1, highestPower);
+    if (diffWithTarget > 0.25) { // 60000 / 5000 = 12, 1 ºC / 12 = 0.083 ºC
+      reducePower(3, lowestPower); //3% is about 0.6v
+    } else if (diffWithTarget < 0.25) {
+      incresePower(3, highestPower);
     }
-  } 
+  }
 }
 
 
 /**
-* Turn heater on or off for this specific PID program
+  Turn heater on or off for this specific PID program
 */
 void manageRun()
 {
@@ -313,94 +302,76 @@ void manageRun()
   Input = getControlTcTemp();
 
   if (getIsHbridgeOn()) {
-    if (currentProgramMillis==0) {
+    if (Input > manualMaxTemp) {
+      Serial.println("!!^MAXT");//hit max temp
+      heaterOff();
+      return;
+    } else if (isPressureHigh()) {
+      Serial.println("!!^HIPR");//high pressure
+      heaterOff();
+      return;
+    }
+    else if (currentProgramMillis == 0) {
       adjustPowerLevelsForRamping();
     }
     else {
 
-//       double gap = abs(Setpoint-Input); //distance away from setpoint
-//        if(gap<10)
-//        {  //we're close to setpoint, use conservative tuning parameters
-//          myPID.SetTunings(conKp, conKi, conKd);
-//        }
-//        else
-//        {
-//           //we're far from setpoint, use aggressive tuning parameters
-//           myPID.SetTunings(KP, KI, KD);
-//        }
-      
+      //       double gap = abs(Setpoint-Input); //distance away from setpoint
+      //        if(gap<10)
+      //        {  //we're close to setpoint, use conservative tuning parameters
+      //          myPID.SetTunings(conKp, conKi, conKd);
+      //        }
+      //        else
+      //        {
+      //           //we're far from setpoint, use aggressive tuning parameters
+      //           myPID.SetTunings(KP, KI, KD);
+      //        }
+
       myPID.Compute();
       //adjustPowerLevelsForConstantTemp();
-//      adjustPowerLevelsForConstantTemp();
-      if (Output!=lastOutput) {
-        
-        //if (Output>0.0) 
+      //      adjustPowerLevelsForConstantTemp();
+      if (Output != lastOutput) {
+
+        //if (Output>0.0)
         setHBridgeVoltage((int)Output);
         lastOutput = Output;
         //else heaterOff();
       }
-      
+
     }
-  
+
     if (Input >= Setpoint) {
       //reached target temp now set timers for current program
       startProgramTimeTrackers();
-      if (maxRunTimeAllowedMillis[currentProgram]==0) {
+      if (maxRunTimeAllowedMillis[currentProgram] == 0) {
         heaterOff();
-      } //else if (Input > Setpoint+5.00) {
-        //heaterOff();
-      //}
-    } 
-    if (isPressureHigh()) {
-      heaterOff();
+      }
     }
+
   } else {
-     if (Input < Setpoint+5.00 && !isPressureHigh()) {
-      //reached target temp now set timers for current program
-      //startProgramTimeTrackers();
+    if (Input < Setpoint + 5.00 && !isPressureHigh()) {
       heaterOn();
     }
   }
-  //Serial.println(millis() - windowStartTime);
- /* if (Output < millis() - windowStartTime) {
-    heaterOff();
-  }
-  else {
-    heaterOn();
-  }*/
-//  if (maxRunTimeAllowedMillis[currentProgram]!=0) {
-//    unsigned long now = millis();
-//    if(now - windowStartTime>WindowSize)
-//    { //time to shift the Relay Window
-//      windowStartTime += WindowSize;
-//    }
-//    
-//    if(Output > now - windowStartTime) heaterOn();
-//    else heaterOff();
-//  }  
-  //powerDebug();
 }
 
 
-void powerheaterLoop()
+void regulateHeater()
 {
-//  if (!heaterTimedOut && powerHeaterAutoMode && millis() - powerheaterMillis >= powerheaterCheckInterval) {
-//    powerheaterMillis = millis();
-//    checkProgramToRun();
-//    manageRun();
-//  }
-}
+  unsigned long now = millis();
+  if (powerheaterMillis == 0 || now - powerheaterMillis >= powerheaterCheckInterval) {
+    powerheaterMillis = now;
 
-void heaterRegulator()
-{
-   if (powerHeaterAutoMode)
+    if (powerHeaterAutoMode) {
       checkProgramToRun();
-    manageRun(); 
+    }
+    manageRun();
+  }
 }
 
 
 /**
-* Set the run of all programs or run in manual - always on mode
+  Set the run of all programs or run in manual - always on mode
 */
 void startRun()
 {
@@ -421,7 +392,7 @@ void startRun()
       computeTempRisesStart = 0;
       //turn the PID on
       myPID.SetTunings(KP, KI, KD);
-      myPID.SetMode(MANUAL);//make sure it;s off      
+      myPID.SetMode(MANUAL);//make sure it;s off
     } else {
       //manual mode
       heaterOn();
@@ -494,21 +465,33 @@ int getTotalRunningTimeMins()
 }
 
 
-void actionHeaterControlCommand(char command)
+void actionHeaterControlCommand(char action)
 {
-  //@[command][action]=ok
-  //*[command][action]=responde to request for info
-  switch(command) {
-    case '+': heaterOn(); Serial.print("@h+"); break;
-    case '-': heaterOff(); Serial.print("@h-"); break;
-    case 'r': startRun(); Serial.print("@hr"); break;
-    case 'a': setPowerHeaterAutoMode(true); Serial.print("@ha"); break;
-    case 's': stopRun(); Serial.print("@hs"); break;
-    case 'm': setPowerHeaterAutoMode(false); Serial.print("@hm"); break;
-    case 'e': Serial.print("*he");  Serial.println(getMinsToEndOfRun()); break;
-    case 'p': Serial.print("*hp");  Serial.println(getCurrentProgramNum());  break;
-    case 't': Serial.print("*ht");  Serial.println(getTotalRunningTimeMillis()); break;
-    case 'c': Serial.print("*hc");  Serial.println(getTotalProgramsToRun());  break;
+  switch (action) {
+    case '+': heaterOn();  break;
+    case '-': heaterOff(); break;
+    case 'r': startRun(); Serial.println("@hr"); break;
+    case 'a': setPowerHeaterAutoMode(true); Serial.println("@ha"); break;
+    case 's': stopRun(); Serial.println("@hs"); break;
+    case 'm': setPowerHeaterAutoMode(false); Serial.println("@hm"); break;
+    case 'e': Serial.println("*he^"+String(getMinsToEndOfRun())); break;
+    case 'c': Serial.println("*hc^"+String(getTotalProgramsToRun()));  break;
+    case 'p': Serial.println("*hp^"+String(getCurrentProgramNum()));  break;
+    case 't': Serial.println("*ht^"+String(getTotalRunningTimeMillis())); break;
+    case 'v': //:hv^255
+      setHBridgeVoltage(getValue(serial0Buffer, '^',  1).toInt());  
+      Serial.println("@hv");    
+      break;
+    case 'f': //:hf^255
+      setHBridgeSpeed(getValue(serial0Buffer, '^',  1).toInt());
+      setConfigSetting("hbridge_speed", getValue(serial0Buffer, '^',  1));
+      Serial.println("@hf"); 
+      break;
+    case 'd': //:hd^99  value should be 0-99
+      setHBridgeDelay(getValue(serial0Buffer, '^',  1).toInt());
+      setConfigSetting("hbridge_delay", getValue(serial0Buffer, '^',  1));
+      Serial.println("@hd"); 
+      break;    
   }
 }
 

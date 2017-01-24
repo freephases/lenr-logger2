@@ -1,6 +1,29 @@
 #ifndef __LOGGER_H__
 #define __LOGGER_H__
 
+/*
+ * Pins
+ */
+
+ /*SD card
+  *  
+  * SD card attached to SPI bus as follows:
+  * MOSI - pin 11 - 51 on mega
+  * MISO - pin 12 - 50 on mega
+  * CLK - pin 13 - 52 on mega
+  */
+#define LL_PIN_SD_CARD_CHIP_SELECT 53
+
+#define LL_PIN_OK_LIGHT 13
+
+#define LL_PIN_PRESSURE A15
+
+//serials
+  //Serial1 // GC-10
+  //Serial2 // h bridge
+  //Serial3 //TC unit
+
+  
 /**
 * debug raw serial output of the slave if you add jumpers to rx and tx of slave to tx and rx of the mega serial 2 ports
 */
@@ -30,7 +53,7 @@
 /**
 * Maxium length of data reviced from slaves for 1 record/line
 */
-#define MAX_STRING_DATA_LENGTH 130
+#define MAX_STRING_DATA_LENGTH 120
 
 /**
 * Maxium length of data reviced from slaves for 1 record/line with less data, help keep mem use down if you use the right one

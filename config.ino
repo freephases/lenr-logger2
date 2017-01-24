@@ -6,8 +6,8 @@
   Example Settings file contents is...
 
   ;lenr logger settings for run time
-  ;sensors_enabled piped delimited list,  values are TC1-TC2, Power, Pressure, Light, IR, Geiger
-  sensors_enabled=Power,Pressure,Geiger,Love
+  ;sensors_enabled piped delimited list,  values are Power, Pressure, Geiger
+  sensors_enabled=Power|Pressure|Geiger|IR
   send_interval_sec=5
   ;PID programs
   ;csv list of values for each program off temp
@@ -17,8 +17,10 @@
   ;repeat all programs above, 0 = off,
   repeat=0
   debug_to_serial=no
-  ;hbridge_speed percentage 100=max, 0=min
+  ;hbridge_speed percentage 255=max, 0=min
   hbridge_speed=75
+  ;delay at end of each cycle in phases/segments
+  hbridge_delay=0
   ;thermocouple offsets
   tc_offsets=0.00,0.49
   cal_voltage=4.957
@@ -30,17 +32,20 @@
   pid_tunings=1.0,0.5,0.25
   constant_offset=5.00
   power_offset=7
+  ;wave form 1 positive, 2 is negitive, 0 is off, each segment is smallest unit of time 
+  wave_form=1,1,0,2,2,0
+  ; default is 1,0,2,0
 */
 
 /**
   Max number of setting we can have in the config file
 */
-#define MAX_SETTINGS 31
+#define MAX_SETTINGS 25
 
 /**
   Char array to hold each line of the config file, we ignore lines starting with ';'
 */
-char loggerSettings[MAX_SETTINGS][70] = {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",  "", "", "", ""};
+char loggerSettings[MAX_SETTINGS][100] = {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""};//, "",  "", "", "", ""};
 
 /**
   Total number of settings loaded
@@ -56,7 +61,7 @@ void loadConfig()
   File myFile = SD.open("run.txt");
   if (myFile) {
     if (debugToSerial) {
-      Serial.println("opened file to read run.txt:");
+      Serial.println("D^opened file to read run.txt:");
     }
 
     byte fileChar;
@@ -109,7 +114,7 @@ void loadConfig()
     loadGlobalSettings();
   } else {
     // if the file didn't open, print an error:
-    Serial.println("error opening RUN file on SD card, cannot run without this, see the doc");
+    Serial.println("!!^error opening RUN file on SD card, cannot run without this, see the doc");
     while (true) {
       connectionOkLight.toggle();
       delay(600);
@@ -117,39 +122,45 @@ void loadConfig()
   }
 }
 
-String getConfigSetting(char *name) {
+String getConfigSetting(char *name, String defaultVal = "")
+{
   for (int i = 0; i < settingsCount; i++) {
     if (getValue(loggerSettings[i], '=', 0).indexOf(name) > -1) {
       return getValue(loggerSettings[i], '=', 1);
     }
   }
-  //if name not found then return a null string object
-  return String("");
+  //if name not found then return defaultVal
+  return defaultVal;
 }
 
-int getConfigSettingAsInt(char *name, int defaultVal = 0) {
+int getConfigSettingAsInt(char *name, int defaultVal = 0)
+{
   if (getConfigSetting(name).length() == 0) return defaultVal;
   else return getConfigSetting(name).toInt();
 }
 
-float getConfigSettingAsFloat(char *name, int defaultVal = 0.000) {
+float getConfigSettingAsFloat(char *name, int defaultVal = 0.000)
+{
   if (getConfigSetting(name).length() == 0) return defaultVal;
   else return getConfigSetting(name).toFloat();
 }
 
-boolean getConfigSettingAsBool(char *name) {
+boolean getConfigSettingAsBool(char *name)
+{
   return (getConfigSetting(name).indexOf("yes") > -1 || getConfigSetting(name).indexOf("true") > -1);
 }
 
 
-boolean isSensorEnabled(char *name) {
+boolean isSensorEnabled(char *name)
+{
   return (getConfigSetting("sensors_enabled").indexOf(name) > -1);
 }
 
 /**
   Populate global settings from our files config settings
 */
-void loadGlobalSettings() {
+void loadGlobalSettings()
+{
   //load up default config settings
 
 
@@ -167,8 +178,8 @@ void loadGlobalSettings() {
 
   if (getConfigSettingAsInt("hbridge_speed", -1) != -1) {
     hBridgeSpeed = getConfigSettingAsInt("hbridge_speed");
-    if (hBridgeSpeed > 100) { //tmp force while testing to 93 - about 190 hz AC sq wave
-      hBridgeSpeed = 100;
+    if (hBridgeSpeed > 255) { //tmp force while testing to 93 - about 190 hz AC sq wave
+      hBridgeSpeed = 255;
     } else if (hBridgeSpeed < 0) {
       hBridgeSpeed = 0;
     }
@@ -190,26 +201,28 @@ void loadGlobalSettings() {
   highestPressure = getConfigSettingAsFloat("highest_pressure", highestPressure);
 
   //set pid tunings
-  if (getValue(getConfigSetting("pid_tunings") + ',', ',', 0).length() > 0) {
-    if (getValue(getConfigSetting("pid_tunings") + ',', ',', 0).toFloat() == NAN) {
-      KP = getValue(getConfigSetting("pid_tunings") + ',', ',', 0).toFloat();
-    }
-    if (getValue(getConfigSetting("pid_tunings") + ',', ',', 1).length() > 0) {
-      if (getValue(getConfigSetting("pid_tunings") + ',', ',', 1).toFloat() == NAN) {
-        KI = getValue(getConfigSetting("pid_tunings") + ',', ',', 1).toFloat();
-      }
-    }
-    if (getValue(getConfigSetting("pid_tunings") + ',', ',', 2).length() > 0) {
-      if (getValue(getConfigSetting("pid_tunings") + ',', ',', 2).toFloat() == NAN) {
+  if (getValue(getConfigSetting("pid_tunings") + ',', ',', 0).length() > 0  &&
+      getValue(getConfigSetting("pid_tunings") + ',', ',', 0).toFloat() != NAN) {
+    KP = getValue(getConfigSetting("pid_tunings") + ',', ',', 0).toFloat();
+    if (getValue(getConfigSetting("pid_tunings") + ',', ',', 1).length() > 0 &&
+        getValue(getConfigSetting("pid_tunings") + ',', ',', 1).toFloat() != NAN) {
+      KI = getValue(getConfigSetting("pid_tunings") + ',', ',', 1).toFloat();
+      if (getValue(getConfigSetting("pid_tunings") + ',', ',', 2).length() > 0 &&
+          getValue(getConfigSetting("pid_tunings") + ',', ',', 2).toFloat() != NAN) {
         KD = getValue(getConfigSetting("pid_tunings") + ',', ',', 2).toFloat();
-      }
-    }
+      } else Serial.println("!!^PID config err");
+    } else Serial.println("!!^PID config err");
   }
+
+  hbridgeDelay = getConfigSettingAsInt("hbridge_delay", hbridgeDelay);
+
+  sendHBridgeWaveForm();
 }
 
 
 
-void setConfigSetting(char *name, String value) {
+void setConfigSetting(char *name, String value)
+{
   for (int i = 0; i < settingsCount; i++) {
     if (getValue(loggerSettings[i], '=', 0).indexOf(name) > -1) {
       char valueChar[40];
@@ -221,14 +234,14 @@ void setConfigSetting(char *name, String value) {
 
 
 
-void actionSetSettingCommand() {
-  
+void actionSetSettingCommand()
+{
   char line[70];
   getValue(serial0Buffer, '^', 1).toCharArray(line, 70);
   if (strlen(line) > 0) {
     char name[30];
     getValue(line, '=', 0).toCharArray(name, 30);
-    setConfigSetting(name, getValue(line, '=', 1));    
+    setConfigSetting(name, getValue(line, '=', 1));
     Serial.println("@o"); //Serial.println(line);
   } else {
     actionErrorCommand('o');
@@ -236,14 +249,15 @@ void actionSetSettingCommand() {
 }
 
 
-void saveSettings() {
+void saveSettings()
+{
   if (SD.exists("run.txt")) SD.remove("run.txt");
   File myFile = SD.open("run.txt", FILE_WRITE);
   if (myFile) {
     if (debugToSerial) {
       Serial.println("opened file to write run.txt:");
     }
-    myFile.println(";LENR PID/Logger settings");
+    myFile.println(";LENR PID/Logger settings v2");
     for (int i = 0; i < settingsCount; i++) {
       myFile.println(loggerSettings[i]);
     }
@@ -256,7 +270,17 @@ void saveSettings() {
     loadHeaterSettings();
     Serial.println("@s");
   } else {
-    actionErrorCommand('s');
+    actionErrorCommand('s', "Cannot save settings");
+  }
+}
+
+void displaySettings()
+{
+  Serial.println("*dSettings");
+  for (int i = 0; i < settingsCount; i++) {
+    Serial.println("*d^ " + String(loggerSettings[i]));
+    //Serial.println();
+    delay(60);
   }
 }
 

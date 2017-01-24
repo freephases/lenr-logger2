@@ -1,5 +1,5 @@
 /**
-* LENR logger
+* PID/logger
 *
 * Prints out results to CSV strings and Serial 
 */
@@ -26,10 +26,6 @@ String getCsvStringHeaders()
    for(int i=0; i<getThermocouplesCount(); i++) {
      ret = ret + ",\"Thermocouple"+(i+1)+"\"";
    }
-
- 
-
-  
    
    return ret;
 }
@@ -44,26 +40,18 @@ String getCsvString(char delimiter = ',', boolean addMillis = true, int maxTCTem
   if (addMillis) {
     ret = String(millis());        
   } else {
-    ret = String("*D^");   
+    ret = String("R^"); 
+
+      if (getIsHbridgeOn()) {
+        ret += "1"; 
+      } else {
+        ret += "0";       
+      }
   }
   
     char s_[15];
     String tmp;
-   /*if (isSensorEnabled("TC1")) {
-     dtostrf(getThermocoupleAvgCelsius1(),2,3,s_);
-     String tmp = String(s_);
-     if (ret.length()>0) ret = ret + delimiter;
-     ret = ret + tmp;
-     
-   }
-   if (isSensorEnabled("TC2")) {     
-     dtostrf(getThermocoupleAvgCelsius2(),2,3,s_);
-     String tmp = String(s_);
-    if (ret.length()>0) ret = ret + delimiter;
-     ret = ret + tmp;
-   }*/
-   
-   
+  
    if (isSensorEnabled("Power")) {    
      dtostrf(getPower(),2,3,s_);
      tmp = String(s_);
@@ -98,14 +86,12 @@ String getCsvString(char delimiter = ',', boolean addMillis = true, int maxTCTem
    int maxTcToSend = getThermocouplesCount();
    if (maxTCTemps!=0) maxTcToSend = maxTCTemps;
    for(int i=0; i< maxTcToSend; i++) {
-       dtostrf(thermocopulesList[i]->getTemp(),2,3,s_);
+       dtostrf(getTCTemp(i),2,3,s_);
        tmp = String(s_);
       if (ret.length()>0) ret = ret + delimiter;
        ret = ret + tmp;            
    }
-
-  
-    
+ 
    
    return ret;
 }
@@ -127,14 +113,15 @@ void saveCsvData()
  saveLineToDatalog(getCsvString()); 
  
   if (debugToSerial) {
-      Serial.println("csv data saved to datalog file");
+      Serial.println("D^csv data saved to datalog file");
     }
 }
 
 /**
 * Print result to serial 0  for interfacing with a program on a PC over USB
 */
-void printRawCsv() {    
+void printRawCsv() 
+{    
   Serial.println(getCsvString(',', false));
 }
 
