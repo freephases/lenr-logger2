@@ -17,6 +17,8 @@ float hbVolts = 0.00;
 boolean hBridgeActive = false;
 boolean hBridgeIsOn = false; // gets set via serial if hb confirms it is ok
 int hBridgeVoltagePwmValue = 0;
+
+
 boolean hBridgeIsActive()
 {
   return hBridgeActive;
@@ -50,7 +52,7 @@ void actionHbridgeOkResponse()
   //example response: OK|+|!
   getValue(hbBuffer, '|', 1).toCharArray(buf, 4);
   switch (buf[0]) {
-    case '+': hBridgeIsOn = true; 
+    case '+': hBridgeIsOn = true;               
               Serial.println("@h+");
               break;
     case '-': hBridgeIsOn = false; 
@@ -220,6 +222,7 @@ void hbWake()
     Serial2.println("?|!");
   }
 }
+
 
 void hBridgeSetup()
 {

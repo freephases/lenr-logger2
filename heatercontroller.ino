@@ -37,6 +37,9 @@ int powerVoltageValue = 0;// 0% = 10v on step down, 255 = ~49.8v on step down
 int lowestPower = 0;
 int highestPower = 255;
 
+unsigned long hBridgeIsOnStartMillis = 0;
+float hBridgeIsOnStartTemp = 0.00;
+
 
 PID myPID(&Input, &Output, &Setpoint, KP, KI, KD, DIRECT);
 
@@ -44,10 +47,10 @@ PID myPID(&Input, &Output, &Setpoint, KP, KI, KD, DIRECT);
 void heaterOn()
 {
   if (!thermocouplesAreActive()) {
-    Serial.println("!!^NOTC");//no tc error
+    Serial.println("!h^NOTC");//no tc error
     thermocouplesWake();
   } else if (!hBridgeIsActive()) {
-    Serial.println("!!^NOHB");//no h-bridge error
+    Serial.println("!h^NOHB");//no h-bridge error
     hbWake();
   } else if (!getIsHbridgeOn()) {
     lastTurnedOnMillis = millis();
@@ -464,15 +467,25 @@ int getTotalRunningTimeMins()
   return runStartedMillis > 0 ? getTotalRunningTimeMillis() / 60000 : 0;
 }
 
+void heaterWatchDogStart()
+{
+  hBridgeIsOnStartMillis = millis(); 
+  hBridgeIsOnStartTemp = getControlTcTemp(); 
+}
+
+void heaterWatchDogStop()
+{
+  hBridgeIsOnStartMillis = 0; 
+}
 
 void actionHeaterControlCommand(char action)
 {
   switch (action) {
-    case '+': heaterOn();  break;
-    case '-': heaterOff(); break;
-    case 'r': startRun(); Serial.println("@hr"); break;
+    case '+': heaterOn(); heaterWatchDogStart(); break;
+    case '-': heaterOff(); heaterWatchDogStop() break;
+    case 'r': startRun(); Serial.println("@hr"); heaterWatchDogStart(); break;
     case 'a': setPowerHeaterAutoMode(true); Serial.println("@ha"); break;
-    case 's': stopRun(); Serial.println("@hs"); break;
+    case 's': stopRun(); Serial.println("@hs"); heaterWatchDogStop(); break;
     case 'm': setPowerHeaterAutoMode(false); Serial.println("@hm"); break;
     case 'e': Serial.println("*he^"+String(getMinsToEndOfRun())); break;
     case 'c': Serial.println("*hc^"+String(getTotalProgramsToRun()));  break;
@@ -493,6 +506,25 @@ void actionHeaterControlCommand(char action)
       Serial.println("@hd"); 
       break;    
   }
+}
+
+/**
+ * Check we are going up in temp, if not stop heater and run
+ */
+void heaterWatchDog()
+{
+  if (hBridgeIsOnStartMillis> 0) {
+    if (millis()-hBridgeIsOnStartMillis>60000) { //1 min
+      if (getControlTcTemp()-hBridgeIsOnStartTemp > 2.00) {
+        hBridgeIsOnStartMillis = 0;//going up in temp good, no need to check now 
+      } else {
+        hBridgeIsOnStartMillis = 0;
+        stopRun(); // no temp raise, stop heater and run if running
+        Serial.println("!h^No temp increase detected"); 
+      }
+    }
+  }
+
 }
 
 

@@ -1,7 +1,7 @@
 /**
   LENR logger
 
-  Basic methods to load config settings from SD card
+  Basic methods to load and save config settings from/to a SD card
 
   Example Settings file contents is...
 
@@ -41,11 +41,12 @@
   Max number of setting we can have in the config file
 */
 #define MAX_SETTINGS 25
+#define MAX_SETTING_LENGTH 100
 
 /**
   Char array to hold each line of the config file, we ignore lines starting with ';'
 */
-char loggerSettings[MAX_SETTINGS][100] = {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""};//, "",  "", "", "", ""};
+char loggerSettings[MAX_SETTINGS][MAX_SETTING_LENGTH] = {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""};//, "",  "", "", "", ""};
 
 /**
   Total number of settings loaded

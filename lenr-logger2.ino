@@ -298,4 +298,5 @@ void loop()
   manageSerial();  
   regulateHeater();
   sendData();
+  heaterWatchDog();
 }

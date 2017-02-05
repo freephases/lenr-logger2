@@ -61,6 +61,7 @@ float mapfloat(float x, float in_min, float in_max, float out_min, float out_max
 //}
 int count = 0;
 
+//todo > tidy up!!!
 
 void pressureRead()
 {
@@ -77,7 +78,7 @@ void pressureRead()
      // calibratedVoltage = readVcc();
       count = 0;
        
-       calFactor =  1023.00 / calibratedVoltage;//+0.0078);//(readVcc()-0.6); //calibratedVoltage;
+      // calFactor =  1023.00 / calibratedVoltage;//+0.0078);//(readVcc()-0.6); //calibratedVoltage;
        //String s(mapfloat(psiSamples.getMedian(), calFactor * 0.5, calFactor * 4.5, -14.5, 30.0);
      // int psis = ((int) psiSamples.getMedian())*100;
       pressurePsi = ((int)(mapfloat(psiSamples.getMedian(), calFactor * 0.5, calFactor * 4.5, -14.5, 30.0)*10))/10.00;//
